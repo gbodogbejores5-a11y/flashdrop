@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """FlashDrop core : protocole, decouverte, envoi, reception, relais. Sans interface.
 Utilise par flashdrop.py (Windows, interface) et flashdrop_cli.py (Linux, terminal)."""
-import socket, threading, json, os, struct, time, subprocess, itertools, uuid
+import socket, threading, json, os, struct, time, subprocess, itertools, uuid, shutil
 
 VERSION = "3.0"
 TCP_PORT = 50555          # transferts de fichiers
 UDP_PORT = 50556          # decouverte des PC (reseau local)
 RELAY_PORT = 50600        # port par defaut du serveur relais (mode distance)
-CHUNK = 1024 * 1024
+CHUNK = 4 * 1024 * 1024          # blocs de 4 Mo
+SOCKBUF = 8 * 1024 * 1024        # gros tampons reseau (vitesse sur internet longue distance)
 NAME = socket.gethostname()
 DEVICE_ID = uuid.uuid4().hex[:8]
 peers = {}                # ip -> (nom, dernier signe de vie)
@@ -49,6 +50,16 @@ def recv_exact(sock, n):
             raise ConnectionError("Connexion coupée")
         buf += part
     return buf
+
+
+def tune(s):
+    """Agrandit les tampons reseau pour ne jamais brider la vitesse."""
+    for o in (socket.SO_SNDBUF, socket.SO_RCVBUF):
+        try:
+            s.setsockopt(socket.SOL_SOCKET, o, SOCKBUF)
+        except OSError:
+            pass
+    return s
 
 
 def fmt_size(n):
@@ -206,11 +217,13 @@ def handle(conn, addr, hk):
                     return
                 conn.sendall(b"1")
                 got, t0 = 0, time.time()
+                buf = bytearray(CHUNK)
+                mv = memoryview(buf)
                 while got < size:
-                    b = conn.recv(min(CHUNK, size - got))
-                    if not b:
+                    k = conn.recv_into(mv, min(CHUNK, size - got))
+                    if not k:
                         raise ConnectionError("Test interrompu")
-                    got += len(b)
+                    got += k
                 conn.sendall(b"1")
                 dt = max(time.time() - t0, 1e-6)
                 hk.done({"kind": "bench", "dir": "in", "name": "Test de vitesse", "size": size,
@@ -218,6 +231,12 @@ def handle(conn, addr, hk):
                 return
             name = os.path.basename(str(meta["name"]))
             rel = safe_rel(str(meta.get("rel", "")))
+            os.makedirs(hk.get_dir(), exist_ok=True)
+            free = shutil.disk_usage(hk.get_dir()).free
+            if size > free - 50 * 1024 * 1024:
+                conn.sendall(b"0")
+                hk.error(f"Pas assez de place pour {name} ({fmt_size(size)}) : il reste {fmt_size(free)}")
+                return
             ok = _decide(hk, addr, who, name, size, meta.get("batch") or {})
             conn.sendall(b"1" if ok else b"0")
             if not ok:
@@ -227,13 +246,15 @@ def handle(conn, addr, hk):
             dest = unique_path(folder, name)
             part = dest + ".part"
             m, got, t0 = Meter(size), 0, time.time()
+            buf = bytearray(CHUNK)
+            mv = memoryview(buf)
             with open(part, "wb") as f:
                 while got < size:
-                    b = conn.recv(min(CHUNK, size - got))
-                    if not b:
+                    k = conn.recv_into(mv, min(CHUNK, size - got))
+                    if not k:
                         raise ConnectionError("Transfert interrompu")
-                    f.write(b)
-                    got += len(b)
+                    f.write(mv[:k])
+                    got += k
                     if m.tick(got):
                         hk.progress(key, got * 100 / max(size, 1), m.speed, m.eta(got), name)
             os.replace(part, dest)
@@ -255,7 +276,7 @@ def handle(conn, addr, hk):
 
 def serve_direct(hk):
     try:
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv = tune(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("", TCP_PORT))
         srv.listen(10)
@@ -289,7 +310,9 @@ class RelayListener:
     def _run(self, host, port, code, ev):
         while not ev.is_set():
             try:
-                s = socket.create_connection((host, port), timeout=10)
+                s = tune(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+                s.settimeout(10)
+                s.connect((host, port))
                 self.sock = s
                 s.settimeout(None)
                 s.sendall(f"L {code} {DEVICE_ID}\n".encode())
@@ -310,17 +333,24 @@ class RelayListener:
 
 
 # ---------- envoi ----------
+def _connect(host, port):
+    s = tune(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+    s.settimeout(10)
+    s.connect((host, port))
+    return s
+
+
 def open_conn(t):
     """t = {'ip','port'} (direct) ou {'room','relay_host','relay_port'} (via relais)."""
     if t.get("room"):
-        s = socket.create_connection((t["relay_host"], t["relay_port"]), timeout=10)
+        s = _connect(t["relay_host"], t["relay_port"])
         s.sendall(f"S {t['room']} {DEVICE_ID}\n".encode())
         s.settimeout(15)
         if s.recv(1) != b"G":
             s.close()
             raise ConnectionError("personne n'écoute dans cette salle (l'autre PC doit l'activer)")
         return s
-    return socket.create_connection((t["ip"], t.get("port", TCP_PORT)), timeout=10)
+    return _connect(t["ip"], t.get("port", TCP_PORT))
 
 
 def send_files(t, label, items, hk):
@@ -338,13 +368,15 @@ def send_files(t, label, items, hk):
                     hk.error(f"{label} a refusé {name}")
                     break
                 m, sent, t0 = Meter(size), 0, time.time()
-                with open(path, "rb") as f:
+                buf = bytearray(CHUNK)
+                mv = memoryview(buf)
+                with open(path, "rb", buffering=0) as f:
                     while True:
-                        b = f.read(CHUNK)
-                        if not b:
+                        k = f.readinto(buf)
+                        if not k:
                             break
-                        s.sendall(b)
-                        sent += len(b)
+                        s.sendall(mv[:k])
+                        sent += k
                         if m.tick(sent):
                             hk.progress(key, sent * 100 / max(size, 1), m.speed, m.eta(sent), name)
                 recv_exact(s, 1)
@@ -368,7 +400,7 @@ def bench_send(t, label, mb, hk):
             if recv_exact(s, 1) != b"1":
                 hk.error(f"{label} ne gère pas le test de vitesse")
                 return
-            block, sent, t0 = os.urandom(CHUNK), 0, time.time()
+            block, sent, t0 = memoryview(os.urandom(CHUNK)), 0, time.time()
             while sent < size:
                 k = min(CHUNK, size - sent)
                 s.sendall(block[:k])
