@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""FlashDrop core : protocole, decouverte, envoi, reception, relais. Sans interface.
-Utilise par flashdrop.py (Windows, interface) et flashdrop_cli.py (Linux, terminal)."""
+"""JRSDrop core : protocole, decouverte, envoi, reception, relais. Sans interface.
+Utilise par jrsdrop.py (Windows, interface) et jrsdrop_cli.py (Linux, terminal)."""
 import socket, threading, json, os, struct, time, subprocess, itertools, uuid, shutil
 
 VERSION = "3.0"
@@ -13,6 +13,8 @@ NAME = socket.gethostname()
 DEVICE_ID = uuid.uuid4().hex[:8]
 peers = {}                # ip -> (nom, dernier signe de vie)
 MY_IPS = []
+receiving = True          # False = mode reception coupe : on refuse tout envoi
+peer_recv = {}            # ip -> ce PC est-il en mode reception ?
 
 _ids = itertools.count(1)
 _batches = {}             # id de lot -> (accepte, heure)
@@ -133,7 +135,7 @@ class Meter:
 class Hooks:
     """Points d'accroche : l'interface ou la CLI remplace ces fonctions."""
     def __init__(self):
-        self.get_dir = lambda: os.path.join(os.path.expanduser("~"), "FlashDrop")
+        self.get_dir = lambda: os.path.join(os.path.expanduser("~"), "JRSDrop")
         self.ask = lambda info: False            # info: from, ip, name, size, count, total
         self.progress = lambda key, pct, speed, eta, label: None
         self.done = lambda rec: None
@@ -147,7 +149,7 @@ def announce_loop():
     global MY_IPS
     while True:
         MY_IPS = local_ips()
-        msg = json.dumps({"app": "flashdrop", "name": NAME, "v": VERSION}).encode()
+        msg = json.dumps({"app": "flashdrop", "name": NAME, "v": VERSION, "recv": receiving}).encode()
         for ip in MY_IPS:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -177,6 +179,7 @@ def listen_loop(on_error=lambda m: None, on_new=lambda ip, name: None):
             if d.get("app") == "flashdrop":
                 if ip not in peers:
                     on_new(ip, str(d.get("name", ip)))
+                peer_recv[ip] = bool(d.get("recv", True))
                 peers[ip] = (str(d.get("name", ip)), time.time())
         except Exception:
             pass
@@ -212,6 +215,9 @@ def handle(conn, addr, hk):
             meta = json.loads(recv_exact(conn, n))
             size = int(meta["size"])
             who = str(meta.get("from", addr[0]))
+            if not receiving:                           # reception coupee
+                conn.sendall(b"0")
+                return
             if meta.get("bench"):                       # test de vitesse : on jette les octets
                 if size > 2 * 1024 ** 3:
                     return
@@ -281,7 +287,7 @@ def serve_direct(hk):
         srv.bind(("", TCP_PORT))
         srv.listen(10)
     except Exception as e:
-        hk.error(f"Erreur : port {TCP_PORT} déjà utilisé (FlashDrop est peut-être déjà ouvert) : {e}")
+        hk.error(f"Erreur : port {TCP_PORT} déjà utilisé (JRSDrop est peut-être déjà ouvert) : {e}")
         return
     while True:
         conn, addr = srv.accept()
@@ -365,7 +371,7 @@ def send_files(t, label, items, hk):
                 s.sendall(struct.pack("!I", len(hdr)) + hdr)
                 s.settimeout(120)
                 if recv_exact(s, 1) != b"1":
-                    hk.error(f"{label} a refusé {name}")
+                    hk.error(f"{label} a refusé {name} (ou n'est pas en mode réception)")
                     break
                 m, sent, t0 = Meter(size), 0, time.time()
                 buf = bytearray(CHUNK)
@@ -398,7 +404,7 @@ def bench_send(t, label, mb, hk):
             s.sendall(struct.pack("!I", len(hdr)) + hdr)
             s.settimeout(120)
             if recv_exact(s, 1) != b"1":
-                hk.error(f"{label} ne gère pas le test de vitesse")
+                hk.error(f"{label} n'est pas prêt à recevoir (mode réception coupé ?)")
                 return
             block, sent, t0 = memoryview(os.urandom(CHUNK)), 0, time.time()
             while sent < size:

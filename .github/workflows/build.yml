@@ -1,4 +1,4 @@
-name: Build exe
+name: Build JRSDrop
 on:
   push:
     tags: ['v*']
@@ -13,13 +13,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller
-      - run: pyinstaller --onefile --noconsole --name FlashDrop flashdrop.py
+      - name: Dependances
+        run: pip install pyinstaller pillow tkinterdnd2
+      - name: Icone
+        run: python make_icon.py
+      - name: Compiler JRSDrop.exe
+        run: pyinstaller --onefile --noconsole --name JRSDrop --icon assets/icon.ico --add-data "assets;assets" --collect-all tkinterdnd2 jrsdrop.py
+      - name: Installeur (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $v = python -c "import fdcore; print(fdcore.VERSION)"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer.iss
       - uses: actions/upload-artifact@v4
         with:
-          name: FlashDrop
-          path: dist/FlashDrop.exe
-      - uses: softprops/action-gh-release@v2
+          name: JRSDrop
+          path: |
+            dist/JRSDrop.exe
+            dist/JRSDrop-Setup.exe
+      - name: Publier la release
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          files: dist/FlashDrop.exe
+          files: |
+            dist/JRSDrop-Setup.exe
+            dist/JRSDrop.exe

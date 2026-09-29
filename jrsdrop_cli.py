@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""FlashDrop CLI : version terminal (serveur Linux, homelab). Meme protocole que FlashDrop.exe.
+"""JRSDrop CLI : version terminal (serveur Linux, homelab). Meme protocole que JRSDrop.exe.
 
-  python3 flashdrop_cli.py receive [--auto] [--dir DOSSIER] [--relay HOTE[:PORT] --room CODE]
-  python3 flashdrop_cli.py list
-  python3 flashdrop_cli.py send IP[:PORT] fichier_ou_dossier [...]
-  python3 flashdrop_cli.py send --relay HOTE[:PORT] --room CODE fichier_ou_dossier [...]
-  python3 flashdrop_cli.py bench IP[:PORT] [Mo]        test de vitesse reseau (defaut 200 Mo)
+  python3 jrsdrop_cli.py receive [--auto] [--dir DOSSIER] [--relay HOTE[:PORT] --room CODE]
+  python3 jrsdrop_cli.py list
+  python3 jrsdrop_cli.py send IP[:PORT] fichier_ou_dossier [...]
+  python3 jrsdrop_cli.py send --relay HOTE[:PORT] --room CODE fichier_ou_dossier [...]
+  python3 jrsdrop_cli.py bench IP[:PORT] [Mo]        test de vitesse reseau (defaut 200 Mo)
 """
 import os, sys, time, threading
 import fdcore as core
@@ -68,7 +68,7 @@ def main():
         return
     cmd = a[0]
     if cmd == "receive":
-        d = opt(a, "--dir") or os.path.join(os.path.expanduser("~"), "FlashDrop")
+        d = opt(a, "--dir") or os.path.join(os.path.expanduser("~"), "JRSDrop")
         os.makedirs(d, exist_ok=True)
         hk = make_hooks(d, "--auto" in a)
         threading.Thread(target=core.announce_loop, daemon=True).start()
@@ -78,7 +78,7 @@ def main():
             rh, rp = hp(opt(a, "--relay") or "", core.RELAY_PORT)
             core.RelayListener(hk).start(rh, rp, opt(a, "--room"))
         time.sleep(0.6)
-        print(f"FlashDrop CLI pret sur {core.NAME} ({', '.join(core.MY_IPS) or 'pas de reseau'}) - port {core.TCP_PORT}")
+        print(f"JRSDrop CLI pret sur {core.NAME} ({', '.join(core.MY_IPS) or 'pas de reseau'}) - port {core.TCP_PORT}")
         print(f"Dossier : {d}  |  acceptation auto : {'oui' if hk.auto_accept else 'non'}  |  Ctrl+C pour arreter")
         try:
             while True:
