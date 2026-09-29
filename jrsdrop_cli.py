@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JRSDrop CLI : version terminal (serveur Linux, homelab). Meme protocole que JRSDrop.exe.
+"""jrsdrop CLI : version terminal (serveur Linux, homelab). Meme protocole que jrsdrop.exe.
 
   python3 jrsdrop_cli.py receive [--auto] [--dir DOSSIER] [--relay HOTE[:PORT] --room CODE]
   python3 jrsdrop_cli.py list
@@ -68,7 +68,7 @@ def main():
         return
     cmd = a[0]
     if cmd == "receive":
-        d = opt(a, "--dir") or os.path.join(os.path.expanduser("~"), "JRSDrop")
+        d = opt(a, "--dir") or os.path.join(os.path.expanduser("~"), "jrsdrop")
         os.makedirs(d, exist_ok=True)
         hk = make_hooks(d, "--auto" in a)
         threading.Thread(target=core.announce_loop, daemon=True).start()
@@ -78,7 +78,7 @@ def main():
             rh, rp = hp(opt(a, "--relay") or "", core.RELAY_PORT)
             core.RelayListener(hk).start(rh, rp, opt(a, "--room"))
         time.sleep(0.6)
-        print(f"JRSDrop CLI pret sur {core.NAME} ({', '.join(core.MY_IPS) or 'pas de reseau'}) - port {core.TCP_PORT}")
+        print(f"jrsdrop CLI pret sur {core.NAME} ({', '.join(core.MY_IPS) or 'pas de reseau'}) - port {core.TCP_PORT}")
         print(f"Dossier : {d}  |  acceptation auto : {'oui' if hk.auto_accept else 'non'}  |  Ctrl+C pour arreter")
         try:
             while True:

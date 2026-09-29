@@ -9,7 +9,7 @@ try:                                   # glisser-deposer (optionnel)
 except Exception:
     HAS_DND = False
 
-APP_NAME, VERSION = "JRSDrop", core.VERSION
+APP_NAME, VERSION = "jrsdrop", core.VERSION
 
 # ---------- couleurs ----------
 BG, SIDE, PANEL = "#080D1A", "#0B1226", "#0D1530"
@@ -34,12 +34,12 @@ def mix(c1, c2, f):
 
 
 # ---------- reglages sauvegardes ----------
-CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "JRSDrop")
+CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "jrsdrop")
 CFG_FILE = os.path.join(CFG_DIR, "config.json")
 
 
 def load_cfg():
-    cfg = {"name": core.NAME, "recv_dir": os.path.join(os.path.expanduser("~"), "Downloads", "JRSDrop"),
+    cfg = {"name": core.NAME, "recv_dir": os.path.join(os.path.expanduser("~"), "Downloads", "jrsdrop"),
            "auto_accept": False, "relay": "", "room": "", "listen_room": False, "send_room": False, "history": [],
            "receive_on": False}
     try:
@@ -347,7 +347,7 @@ class App:
             self.root.lift()
             self.root.bell()
             d = tk.Toplevel(self.root)
-            d.title("JRSDrop")
+            d.title("jrsdrop")
             d.configure(bg=CARD)
             d.resizable(False, False)
             d.attributes("-topmost", True)
@@ -551,7 +551,7 @@ class App:
     def send(self):
         t = self.targets()
         if not t or not self.items:
-            messagebox.showwarning("JRSDrop", "Choisis au moins un PC (radar, adresse ou salle) et au moins un fichier.")
+            messagebox.showwarning("jrsdrop", "Choisis au moins un PC (radar, adresse ou salle) et au moins un fichier.")
             return
         for tg, label in t:
             threading.Thread(target=core.send_files, args=(tg, label, list(self.items), self.hk), daemon=True).start()
@@ -559,7 +559,7 @@ class App:
     def bench(self):
         t = self.targets()
         if not t:
-            messagebox.showwarning("JRSDrop", "Choisis d'abord un PC (radar, adresse ou salle).")
+            messagebox.showwarning("jrsdrop", "Choisis d'abord un PC (radar, adresse ou salle).")
             return
         self.set_status("Test de vitesse en cours (200 Mo)...")
         for tg, label in t:
@@ -732,7 +732,7 @@ class App:
 if __name__ == "__main__":
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AfricaGolden.JRSDrop")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AfricaGolden.jrsdrop")
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass

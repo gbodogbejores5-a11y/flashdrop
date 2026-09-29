@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JRSDrop core : protocole, decouverte, envoi, reception, relais. Sans interface.
+"""jrsdrop core : protocole, decouverte, envoi, reception, relais. Sans interface.
 Utilise par jrsdrop.py (Windows, interface) et jrsdrop_cli.py (Linux, terminal)."""
 import socket, threading, json, os, struct, time, subprocess, itertools, uuid, shutil
 
@@ -135,7 +135,7 @@ class Meter:
 class Hooks:
     """Points d'accroche : l'interface ou la CLI remplace ces fonctions."""
     def __init__(self):
-        self.get_dir = lambda: os.path.join(os.path.expanduser("~"), "JRSDrop")
+        self.get_dir = lambda: os.path.join(os.path.expanduser("~"), "jrsdrop")
         self.ask = lambda info: False            # info: from, ip, name, size, count, total
         self.progress = lambda key, pct, speed, eta, label: None
         self.done = lambda rec: None
@@ -287,7 +287,7 @@ def serve_direct(hk):
         srv.bind(("", TCP_PORT))
         srv.listen(10)
     except Exception as e:
-        hk.error(f"Erreur : port {TCP_PORT} déjà utilisé (JRSDrop est peut-être déjà ouvert) : {e}")
+        hk.error(f"Erreur : port {TCP_PORT} déjà utilisé (jrsdrop est peut-être déjà ouvert) : {e}")
         return
     while True:
         conn, addr = srv.accept()
