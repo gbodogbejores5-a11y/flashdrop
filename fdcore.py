@@ -3,7 +3,7 @@
 Utilise par jrsdrop.py (Windows, interface) et jrsdrop_cli.py (Linux, terminal)."""
 import socket, threading, json, os, struct, time, subprocess, itertools, uuid, shutil
 
-VERSION = "3.0"
+VERSION = "3.1"
 TCP_PORT = 50555          # transferts de fichiers
 UDP_PORT = 50556          # decouverte des PC (reseau local)
 RELAY_PORT = 50600        # port par defaut du serveur relais (mode distance)
@@ -144,6 +144,41 @@ class Hooks:
         self.auto_accept = False
 
 
+class Ctl:
+    """Pause / annulation d'un transfert en cours."""
+    def __init__(self):
+        self.paused = False
+        self.cancel = False
+        self.sock = None
+
+    def stop(self):
+        self.cancel = True
+        self.paused = False
+        s = self.sock
+        if s:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+controls = {}             # cle du transfert -> Ctl
+
+
+def _gate(ctl, hk, key, pct, name):
+    """Point de controle : leve une erreur si annule, attend si en pause. True si on a attendu."""
+    if ctl.cancel:
+        raise ConnectionAbortedError("annule")
+    if not ctl.paused:
+        return False
+    hk.progress(key, max(pct, 0.1), 0, 0, name + " (en pause)")
+    while ctl.paused and not ctl.cancel:
+        time.sleep(0.2)
+    if ctl.cancel:
+        raise ConnectionAbortedError("annule")
+    return True
+
+
 # ---------- decouverte (reseau local) ----------
 def announce_loop():
     global MY_IPS
@@ -206,6 +241,8 @@ def _decide(hk, addr, who, name, size, batch):
 def handle(conn, addr, hk):
     key = f"in-{addr[0]}:{addr[1]}"
     part = None
+    ctl = Ctl()
+    ctl.sock = conn
     with conn:
         try:
             conn.settimeout(120)
@@ -251,14 +288,18 @@ def handle(conn, addr, hk):
             os.makedirs(folder, exist_ok=True)
             dest = unique_path(folder, name)
             part = dest + ".part"
+            controls[key] = ctl
+            conn.settimeout(900)                        # laisse le temps d'une pause
             m, got, t0 = Meter(size), 0, time.time()
             buf = bytearray(CHUNK)
             mv = memoryview(buf)
             with open(part, "wb") as f:
                 while got < size:
+                    if _gate(ctl, hk, key, got * 100 / max(size, 1), name):
+                        m.t, m.n, m.speed = time.time(), got, 0.0
                     k = conn.recv_into(mv, min(CHUNK, size - got))
                     if not k:
-                        raise ConnectionError("Transfert interrompu")
+                        raise ConnectionError("Transfert interrompu par l'autre PC")
                     f.write(mv[:k])
                     got += k
                     if m.tick(got):
@@ -270,13 +311,14 @@ def handle(conn, addr, hk):
             hk.done({"kind": "file", "dir": "in", "name": name, "size": size,
                      "speed": size / dt, "peer": who, "path": dest})
         except Exception as e:
-            hk.error(f"Erreur réception : {e}")
+            hk.error(f"Réception annulée : {name}" if ctl.cancel else f"Erreur réception : {e}")
             if part and os.path.exists(part):
                 try:
                     os.remove(part)
                 except OSError:
                     pass
         finally:
+            controls.pop(key, None)
             hk.progress(key, 0, 0, 0, "")
 
 
@@ -361,23 +403,29 @@ def open_conn(t):
 
 def send_files(t, label, items, hk):
     key = "out-" + str(t.get("ip") or t.get("room"))
+    ctl = Ctl()
+    controls[key] = ctl
     batch = {"id": uuid.uuid4().hex[:10], "count": len(items),
              "total": sum(os.path.getsize(p) for p, _ in items)}
     for path, rel in items:
         try:
             size, name = os.path.getsize(path), os.path.basename(path)
             with open_conn(t) as s:
+                ctl.sock = s
                 hdr = json.dumps({"name": name, "size": size, "from": NAME, "rel": rel, "batch": batch}).encode()
                 s.sendall(struct.pack("!I", len(hdr)) + hdr)
                 s.settimeout(120)
                 if recv_exact(s, 1) != b"1":
                     hk.error(f"{label} a refusé {name} (ou n'est pas en mode réception)")
                     break
+                s.settimeout(900)                       # laisse le temps d'une pause
                 m, sent, t0 = Meter(size), 0, time.time()
                 buf = bytearray(CHUNK)
                 mv = memoryview(buf)
                 with open(path, "rb", buffering=0) as f:
                     while True:
+                        if _gate(ctl, hk, key, sent * 100 / max(size, 1), name):
+                            m.t, m.n, m.speed = time.time(), sent, 0.0
                         k = f.readinto(buf)
                         if not k:
                             break
@@ -390,8 +438,12 @@ def send_files(t, label, items, hk):
             hk.done({"kind": "file", "dir": "out", "name": name, "size": size,
                      "speed": size / dt, "peer": label, "path": path})
         except Exception as e:
-            hk.error(f"Erreur envoi vers {label} : {e}")
+            if ctl.cancel:
+                hk.error(f"Envoi annulé vers {label}")
+            else:
+                hk.error(f"Erreur envoi vers {label} : transfert interrompu ({e})")
             break
+    controls.pop(key, None)
     hk.progress(key, 0, 0, 0, "")
 
 

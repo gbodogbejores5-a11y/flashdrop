@@ -111,7 +111,10 @@ def main():
                 print("Aucun fichier a envoyer.")
                 return
             print(f"Envoi de {len(items)} fichier(s) vers {label} (attente d'acceptation)...")
-            core.send_files(t, label, items, hk)
+            try:
+                core.send_files(t, label, items, hk)
+            except KeyboardInterrupt:
+                print("\nEnvoi annule (Ctrl+C).")
 
 
 if __name__ == "__main__":

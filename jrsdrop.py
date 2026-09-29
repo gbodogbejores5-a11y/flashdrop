@@ -132,6 +132,7 @@ class App:
         self.pshow = self.ptarget = 0.0
         self.t0 = time.time()
         self.send_text = ""
+        self._btns_on = {}
 
         core.receiving = self.cfg["receive_on"]
         self.hk = core.Hooks()
@@ -234,8 +235,13 @@ class App:
         FlatButton(btns, "\u26a1 Test de vitesse", self.bench, pady=12, padx=18).pack(side="left", padx=(10, 0))
         self.pb = tk.Canvas(page, height=10, bg=BG, highlightthickness=0)
         self.pb.pack(fill="x", pady=(14, 4))
-        self.stat_lbl = tk.Label(page, text="", bg=BG, fg=ACCENT, font=(FONT, 10, "bold"), anchor="w")
-        self.stat_lbl.pack(fill="x")
+        row2 = tk.Frame(page, bg=BG)
+        row2.pack(fill="x")
+        self.stat_lbl = tk.Label(row2, text="", bg=BG, fg=ACCENT, font=(FONT, 10, "bold"), anchor="w")
+        self.stat_lbl.pack(side="left", fill="x", expand=True)
+        self.btn_pause = FlatButton(row2, "Pause", lambda: self.pause_toggle("out-"), padx=14, pady=4, font=(FONT, 9, "bold"))
+        self.btn_cancel = FlatButton(row2, "Annuler", lambda: self.cancel_all("out-"), bg=ERR, hover=mix(ERR, "#FFFFFF", 0.3),
+                                     fg="#04121A", padx=14, pady=4, font=(FONT, 9, "bold"))
 
     def build_receive(self, page):
         tk.Label(page, text="Recevoir des fichiers", bg=BG, fg=TEXT, font=(FONT, 16, "bold")).pack(anchor="w")
@@ -266,8 +272,13 @@ class App:
         FlatButton(fr, "Ouvrir le dossier", self.open_dir, padx=10, pady=4, font=(FONT, 9, "bold")).pack(side="right")
         self.pb2 = tk.Canvas(page, height=10, bg=BG, highlightthickness=0)
         self.pb2.pack(fill="x", pady=(14, 4))
-        self.stat2 = tk.Label(page, text="", bg=BG, fg=ACCENT, font=(FONT, 10, "bold"), anchor="w")
-        self.stat2.pack(fill="x")
+        row3 = tk.Frame(page, bg=BG)
+        row3.pack(fill="x")
+        self.stat2 = tk.Label(row3, text="", bg=BG, fg=ACCENT, font=(FONT, 10, "bold"), anchor="w")
+        self.stat2.pack(side="left", fill="x", expand=True)
+        self.btn_pause2 = FlatButton(row3, "Pause", lambda: self.pause_toggle("in-"), padx=14, pady=4, font=(FONT, 9, "bold"))
+        self.btn_cancel2 = FlatButton(row3, "Annuler", lambda: self.cancel_all("in-"), bg=ERR, hover=mix(ERR, "#FFFFFF", 0.3),
+                                      fg="#04121A", padx=14, pady=4, font=(FONT, 9, "bold"))
 
     def build_hist(self, page):
         tk.Label(page, text="Historique", bg=BG, fg=TEXT, font=(FONT, 16, "bold")).pack(anchor="w", pady=(0, 10))
@@ -481,6 +492,22 @@ class App:
             self.hlist.insert("end", f"{h['t']}  {a}  {h['name'][:34]:34} {core.fmt_size(h['size']):>9}  "
                                      f"{core.fmt_speed(h['speed']):>11}  {h['peer'][:16]}")
 
+    def pause_toggle(self, prefix):
+        ctls = [c for k, c in core.controls.items() if k.startswith(prefix)]
+        if not ctls:
+            return
+        pause = not all(c.paused for c in ctls)
+        for c in ctls:
+            c.paused = pause
+        self.set_status("Transfert en pause. Clique sur Reprendre pour continuer." if pause else "Transfert repris \u2705")
+
+    def cancel_all(self, prefix):
+        ctls = [c for k, c in list(core.controls.items()) if k.startswith(prefix)]
+        for c in ctls:
+            c.stop()
+        if ctls:
+            self.set_status(f"{len(ctls)} transfert(s) annulé(s).")
+
     def toggle_receive(self):
         self.set_receive(not core.receiving)
 
@@ -592,10 +619,10 @@ class App:
         t = now - self.t0
         if self.pages["send"].winfo_ismapped():
             self.draw_radar(now, t)
-            self.draw_progress(t)
+            self.draw_progress(t, self.pb, self.stat_lbl, "out-", (self.btn_pause, self.btn_cancel))
         elif self.pages["recv"].winfo_ismapped():
             self.draw_receive(t)
-            self.draw_progress(t, self.pb2, self.stat2)
+            self.draw_progress(t, self.pb2, self.stat2, "in-", (self.btn_pause2, self.btn_cancel2))
         self.root.after(33, self.tick)
 
     def draw_radar(self, now, t):
@@ -663,10 +690,22 @@ class App:
             msg, col = "Réception désactivée", MUTED
         cv.create_text(cx, 195, text=msg, fill=col, font=(FONT, 10))
 
-    def draw_progress(self, t, pb=None, lbl=None):
-        main = pb is None
-        pb, lbl = pb or self.pb, lbl or self.stat_lbl
-        vals = list(self.prog.values())
+    def draw_progress(self, t, pb, lbl, prefix, btns):
+        main = prefix == "out-"
+        vals = [v for k, v in self.prog.items() if k.startswith(prefix)]
+        ctls = [c for k, c in core.controls.items() if k.startswith(prefix)]
+        act = bool(vals)
+        if act != self._btns_on.get(prefix):
+            self._btns_on[prefix] = act
+            btns[0].pack_forget()
+            btns[1].pack_forget()
+            if act:
+                btns[1].pack(side="right")
+                btns[0].pack(side="right", padx=(0, 6))
+        if act and ctls:
+            want = "Reprendre" if all(c.paused for c in ctls) else "Pause"
+            if btns[0].cget("text") != want:
+                btns[0].config(text=want)
         self.ptarget = sum(v[0] for v in vals) / len(vals) if vals else 0
         self.pshow += (self.ptarget - self.pshow) * 0.15
         pb.delete("all")
